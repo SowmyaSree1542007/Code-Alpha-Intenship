@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Object Detection & Tracking | CodeAlpha</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <!-- TensorFlow.js + COCO-SSD (equivalent to YOLO for browser) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.10.0/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #060810;
+      --surface: #0b0e17;
+      --surface2: #111420;
+      --surface3: #181d2e;
+      --border: #1a2035;
+      --green: #00ff88;
+      --green2: #34d399;
+      --glow: rgba(0,255,136,0.1);
+      --text: #e0e8f8;
+      --muted: #5a6a8a;
+      --red: #ff4466;
+      --amber: #fbbf24;
+      --blue: #38bdf8;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header */
+    header {
+      padding: 16px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .logo {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--green);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .scan-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.3;transform:scale(0.8)} }
+    .badge {
+      background: var(--glow);
+      border: 1px solid var(--green);
+      color: var(--green);
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    main {
+      flex: 1;
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 28px 20px 60px;
+    }
+
+    .hero { text-align: center; margin-bottom: 28px; }
+    .hero h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: clamp(1.6rem, 4vw, 2.5rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #00ff88 0%, #38bdf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 8px;
+    }
+    .hero p { color: var(--muted); font-size: 0.92rem; max-width: 520px; margin: 0 auto; line-height: 1.6; }
+
+    /* Layout */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 16px;
+      align-items: start;
+    }
+    @media(max-width: 768px) { .layout { grid-template-columns: 1fr; } }
+
+    /* Video panel */
+    .video-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .video-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .video-head h3 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .fps-badge {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--green);
+      background: var(--glow);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--green);
+    }
+
+    .canvas-wrap {
+      position: relative;
+      background: #000;
+      aspect-ratio: 4/3;
+      width: 100%;
+    }
+    #videoEl {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror */
+    }
+    #detCanvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+    }
+
+    /* Placeholder */
+    #placeholder {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: var(--surface2);
+      gap: 12px;
+    }
+    .scan-icon { font-size: 3rem; opacity: 0.3; }
+    #placeholder p { color: var(--muted); font-size: 0.9rem; text-align: center; max-width: 220px; }
+
+    /* Loading overlay */
+    #loadingOverlay {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(6,8,16,0.85);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px;
+      z-index: 10;
+      display: none;
+    }
+    .spinner {
+      width: 44px; height: 44px;
+      border: 3px solid var(--border);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loadingText { color: var(--green); font-size: 0.9rem; font-weight: 500; }
+
+    /* Controls */
+    .ctrl-bar {
+      display: flex; gap: 10px; padding: 14px 18px;
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .btn-start {
+      background: linear-gradient(135deg, #00c466, #00ff88);
+      color: #020c06;
+      border: none;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.92rem;
+      font-weight: 700;
+      padding: 10px 22px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .btn-start:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-start:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    .btn-stop {
+      background: var(--surface2);
+      border: 1px solid var(--red);
+      color: var(--red);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.92rem;
+      font-weight: 600;
+      padding: 10px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .btn-stop:hover { background: rgba(255,68,102,0.1); }
+    .btn-stop:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .conf-wrap {
+      display: flex; align-items: center; gap: 8px;
+      margin-left: auto;
+    }
+    .conf-wrap label { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+    .conf-wrap input { width: 90px; accent-color: var(--green); }
+    .conf-wrap span { font-size: 0.78rem; color: var(--green); font-weight: 600; min-width: 30px; }
+
+    /* Sidebar */
+    .sidebar { display: flex; flex-direction: column; gap: 14px; }
+
+    .side-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .side-card-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .side-card-body { padding: 14px 16px; }
+
+    /* Stats */
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat-item .s-label { font-size: 0.7rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-item .s-val {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--green);
+      line-height: 1.1;
+    }
+
+    /* Detected objects list */
+    #detList { display: flex; flex-direction: column; gap: 6px; min-height: 60px; }
+    .det-item {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+    .det-name { font-size: 0.85rem; font-weight: 600; }
+    .det-conf {
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .det-id {
+      font-size: 0.7rem;
+      color: var(--muted);
+      min-width: 30px;
+    }
+    .empty-list { color: var(--muted); font-size: 0.85rem; font-style: italic; }
+
+    /* History log */
+    #historyLog {
+      display: flex; flex-direction: column; gap: 4px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    #historyLog::-webkit-scrollbar { width: 3px; }
+    #historyLog::-webkit-scrollbar-thumb { background: var(--border); }
+    .log-entry {
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: flex; gap: 8px;
+    }
+    .log-entry .log-time { color: var(--green); font-weight: 600; min-width: 56px; }
+    .log-entry .log-obj { color: var(--text); }
+
+    /* Info */
+    .info-list { display: flex; flex-direction: column; gap: 8px; }
+    .info-row { display: flex; gap: 10px; align-items: flex-start; }
+    .info-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-top: 6px; flex-shrink: 0; }
+    .info-text { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+    .info-text strong { color: var(--text); }
+
+    footer {
+      text-align: center;
+      padding: 18px;
+      color: var(--muted);
+      font-size: 0.77rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><div class="scan-dot"></div> DetectAI</div>
+  <div class="badge">CodeAlpha Task 4</div>
+</header>
+
+<main>
+  <div class="hero">
+    <h1>Object Detection &amp; Tracking</h1>
+    <p>Real-time AI object detection using a COCO-SSD deep learning model — detects 80 object classes from your webcam live.</p>
+  </div>
+
+  <div class="layout">
+    <!-- Video -->
+    <div class="video-panel">
+      <div class="video-head">
+        <h3>📹 Live Camera Feed</h3>
+        <span class="fps-badge" id="fpsBadge">— FPS</span>
+      </div>
+      <div class="canvas-wrap">
+        <div id="placeholder">
+          <div class="scan-icon">🔍</div>
+          <p>Click <strong>Start Detection</strong> to activate your webcam</p>
+        </div>
+        <div id="loadingOverlay">
+          <div class="spinner"></div>
+          <div id="loadingText">Loading AI model...</div>
+        </div>
+        <video id="videoEl" autoplay muted playsinline></video>
+        <canvas id="detCanvas"></canvas>
+      </div>
+      <div class="ctrl-bar">
+        <button class="btn-start" id="startBtn" onclick="startDetection()">▶ Start Detection</button>
+        <button class="btn-stop" id="stopBtn" onclick="stopDetection()" disabled>⏹ Stop</button>
+        <div class="conf-wrap">
+          <label>Min Confidence</label>
+          <input type="range" id="confSlider" min="10" max="90" value="50" oninput="document.getElementById('confVal').textContent=this.value+'%'"/>
+          <span id="confVal">50%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <!-- Stats -->
+      <div class="side-card">
+        <div class="side-card-head">Detection Stats</div>
+        <div class="side-card-body">
+          <div class="stat-grid">
+            <div class="stat-item"><div class="s-label">Objects Now</div><div class="s-val" id="statObjs">0</div></div>
+            <div class="stat-item"><div class="s-label">FPS</div><div class="s-val" id="statFPS">—</div></div>
+            <div class="stat-item"><div class="s-label">Total Seen</div><div class="s-val" id="statTotal">0</div></div>
+            <div class="stat-item"><div class="s-label">Frames</div><div class="s-val" id="statFrames">0</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detected now -->
+      <div class="side-card">
+        <div class="side-card-head">Detected Objects</div>
+        <div class="side-card-body">
+          <div id="detList"><span class="empty-list">Start detection to see objects...</span></div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="side-card">
+        <div class="side-card-head">Detection Log</div>
+        <div class="side-card-body" style="padding:10px 14px">
+          <div id="historyLog"><span class="empty-list" style="font-size:0.78rem">No log yet...</span></div>
+        </div>
+      </div>
+
+      <!-- How it works -->
+      <div class="side-card">
+        <div class="side-card-head">How It Works</div>
+        <div class="side-card-body">
+          <div class="info-list">
+            <div class="info-row"><div class="info-dot"></div><div class="info-text"><strong>COCO-SSD</strong> — a pre-trained SSD MobileNet model, equivalent to lightweight YOLO, trained on 80 COCO object classes</div></div>
+            <div class="info-row"><div class="info-dot"></div><div class="info-text"><strong>TensorFlow.js</strong> runs the model entirely in your browser — no Python, no server needed</div></div>
+            <div class="info-row"><div class="info-dot"></div><div class="info-text"><strong>Bounding boxes</strong> — coordinates (x,y,w,h) drawn on canvas, same as OpenCV + YOLO in Python</div></div>
+            <div class="info-row"><div class="info-dot"></div><div class="info-text"><strong>Object tracking</strong> — IDs assigned per class instance and tracked across frames by position proximity</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<footer>Built for CodeAlpha AI Internship · Task 4: Object Detection &amp; Tracking · TensorFlow.js COCO-SSD</footer>
+
+<script>
+let model = null;
+let stream = null;
+let animId = null;
+let isRunning = false;
+let frameCount = 0;
+let totalDetected = 0;
+let lastTime = 0;
+let trackerMap = {}; // class -> [{id, cx, cy}]
+let nextId = {};
+let detectionLog = [];
+let seenClasses = new Set();
+
+// Color palette per class
+const CLASS_COLORS = {};
+const PALETTE = ['#00ff88','#38bdf8','#f5c842','#ff6b9d','#a78bfa','#fb923c','#34d399','#60a5fa','#facc15','#f87171'];
+function getColor(cls) {
+  if (!CLASS_COLORS[cls]) CLASS_COLORS[cls] = PALETTE[Object.keys(CLASS_COLORS).length % PALETTE.length];
+  return CLASS_COLORS[cls];
+}
+
+async function startDetection() {
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn  = document.getElementById('stopBtn');
+  const loading  = document.getElementById('loadingOverlay');
+  const ph       = document.getElementById('placeholder');
+
+  startBtn.disabled = true;
+  loading.style.display = 'flex';
+  document.getElementById('loadingText').textContent = 'Requesting camera access...';
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+    const video = document.getElementById('videoEl');
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    ph.style.display = 'none';
+
+    document.getElementById('loadingText').textContent = 'Loading COCO-SSD AI model...';
+    if (!model) model = await cocoSsd.load({ base: 'mobilenet_v2' });
+
+    loading.style.display = 'none';
+    stopBtn.disabled = false;
+    isRunning = true;
+    frameCount = 0;
+    lastTime = performance.now();
+    detectLoop();
+  } catch(err) {
+    loading.style.display = 'none';
+    startBtn.disabled = false;
+    ph.style.display = 'flex';
+    ph.querySelector('p').innerHTML = `<span style="color:#ff4466">⚠️ ${err.message.includes('Permission') ? 'Camera access denied. Please allow camera.' : err.message}</span>`;
+  }
+}
+
+function stopDetection() {
+  isRunning = false;
+  if (animId) cancelAnimationFrame(animId);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  const video = document.getElementById('videoEl');
+  video.srcObject = null;
+
+  // Clear canvas
+  const canvas = document.getElementById('detCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+  document.getElementById('placeholder').style.display = 'flex';
+  document.getElementById('placeholder').querySelector('p').innerHTML = 'Click <strong>Start Detection</strong> to activate your webcam';
+  document.getElementById('fpsBadge').textContent = '— FPS';
+  document.getElementById('detList').innerHTML = '<span class="empty-list">Stopped.</span>';
+  trackerMap = {}; nextId = {};
+}
+
+async function detectLoop() {
+  if (!isRunning) return;
+  const video = document.getElementById('videoEl');
+  const canvas = document.getElementById('detCanvas');
+
+  canvas.width  = video.videoWidth  || 640;
+  canvas.height = video.videoHeight || 480;
+
+  const minConf = parseInt(document.getElementById('confSlider').value) / 100;
+  const predictions = await model.detect(video, undefined, minConf);
+
+  drawDetections(canvas, predictions, video);
+  updateUI(predictions);
+
+  frameCount++;
+  const now = performance.now();
+  const elapsed = (now - lastTime) / 1000;
+  if (elapsed >= 0.5) {
+    const fps = Math.round(frameCount / elapsed);
+    document.getElementById('fpsBadge').textContent = fps + ' FPS';
+    document.getElementById('statFPS').textContent = fps;
+    frameCount = 0;
+    lastTime = now;
+  }
+  document.getElementById('statFrames').textContent = parseInt(document.getElementById('statFrames').textContent || 0) + 1;
+
+  animId = requestAnimationFrame(detectLoop);
+}
+
+function drawDetections(canvas, preds, video) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Mirror transform (since video is mirrored via CSS)
+  ctx.save();
+  ctx.scale(-1, 1);
+  ctx.translate(-canvas.width, 0);
+
+  preds.forEach((pred, i) => {
+    const [x, y, w, h] = pred.bbox;
+    const color = getColor(pred.class);
+    const label = `${pred.class} #${getTrackId(pred)} ${Math.round(pred.score * 100)}%`;
+
+    // Bounding box
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.strokeRect(x, y, w, h);
+    ctx.shadowBlur = 0;
+
+    // Corner accents
+    const cs = 12;
+    ctx.lineWidth = 3;
+    [[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([cx,cy], qi) => {
+      ctx.beginPath();
+      ctx.moveTo(cx + (qi%2===0?cs:-cs), cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + (qi<2?cs:-cs));
+      ctx.stroke();
+    });
+
+    // Label background
+    ctx.font = 'bold 12px Inter';
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.9;
+    ctx.fillRect(x, y - 22, tw + 10, 22);
+    ctx.globalAlpha = 1;
+
+    // Label text
+    ctx.fillStyle = '#000';
+    ctx.fillText(label, x + 5, y - 6);
+  });
+
+  ctx.restore();
+}
+
+// Simple centroid-based tracker
+function getTrackId(pred) {
+  const [x,y,w,h] = pred.bbox;
+  const cx = x + w/2, cy = y + h/2;
+  const cls = pred.class;
+  if (!trackerMap[cls]) trackerMap[cls] = [];
+  if (!nextId[cls]) nextId[cls] = 1;
+
+  let best = null, bestDist = 80;
+  trackerMap[cls].forEach(t => {
+    const d = Math.hypot(t.cx - cx, t.cy - cy);
+    if (d < bestDist) { best = t; bestDist = d; }
+  });
+  if (best) { best.cx = cx; best.cy = cy; return best.id; }
+  const newTrack = { id: nextId[cls]++, cx, cy };
+  trackerMap[cls].push(newTrack);
+  return newTrack.id;
+}
+
+function updateUI(preds) {
+  const list = document.getElementById('detList');
+  document.getElementById('statObjs').textContent = preds.length;
+  totalDetected += preds.length;
+  document.getElementById('statTotal').textContent = totalDetected;
+
+  if (preds.length === 0) {
+    list.innerHTML = '<span class="empty-list">No objects detected — try moving closer</span>';
+    return;
+  }
+
+  list.innerHTML = preds.map(p => {
+    const color = getColor(p.class);
+    const conf = Math.round(p.score * 100);
+    const confClass = conf >= 80 ? 'style="background:rgba(0,255,136,0.12);color:#00ff88"' :
+                      conf >= 60 ? 'style="background:rgba(251,191,36,0.12);color:#fbbf24"' :
+                                   'style="background:rgba(255,68,102,0.12);color:#ff4466"';
+    return `<div class="det-item">
+      <span class="det-id" style="color:${color}">#${getTrackId(p)}</span>
+      <span class="det-name">${p.class}</span>
+      <span class="det-conf" ${confClass}>${conf}%</span>
+    </div>`;
+  }).join('');
+
+  // Log new classes
+  const ts = new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  preds.forEach(p => {
+    if (!seenClasses.has(p.class)) {
+      seenClasses.add(p.class);
+      detectionLog.unshift({ time: ts, obj: p.class, conf: Math.round(p.score*100) });
+      if (detectionLog.length > 30) detectionLog.pop();
+      renderLog();
+    }
+  });
+}
+
+function renderLog() {
+  const log = document.getElementById('historyLog');
+  if (!detectionLog.length) return;
+  log.innerHTML = detectionLog.map(e =>
+    `<div class="log-entry"><span class="log-time">${e.time}</span><span class="log-obj">${e.obj} (${e.conf}%)</span></div>`
+  ).join('');
+}
+</script>
+</body>
+</html>
